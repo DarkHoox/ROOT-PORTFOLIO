@@ -16,14 +16,17 @@ interface GenOptions {
  * Generates a 5y daily OHLCV series using GBM with a slow regime-cycle
  * modulation (so the walk isn't just noise around one trend line) and
  * quarterly earnings-style gap jumps. Deterministic per symbol.
+ *
+ * The walk starts at basePrice and the whole series is rescaled at the end
+ * so the FINAL close equals basePrice — "basePrice" is the intended current
+ * price, and history extends backwards from it.
  */
 export function generateDailySeries({ symbol, basePrice, drift, vol }: GenOptions): Candle[] {
   const rand = seededRandom(`series:${symbol}`);
   const dt = 1 / TRADING_DAYS_PER_YEAR;
   const candles: Candle[] = [];
 
-  let price = basePrice / priceIndexEstimate(drift, vol, TOTAL_DAYS, `series:${symbol}`);
-  if (!isFinite(price) || price <= 0) price = basePrice * 0.4;
+  let price = basePrice;
 
   const now = Math.floor(Date.now() / 1000);
   const daySeconds = 86400;
@@ -64,10 +67,10 @@ export function generateDailySeries({ symbol, basePrice, drift, vol }: GenOption
 
     candles.push({
       time: startTime,
-      open: round2(open),
-      high: round2(Math.max(high, open, close)),
-      low: round2(Math.max(Math.min(low, open, close), 0.1)),
-      close: round2(close),
+      open,
+      high: Math.max(high, open, close),
+      low: Math.max(Math.min(low, open, close), 0.1),
+      close,
       volume,
     });
 
@@ -76,22 +79,18 @@ export function generateDailySeries({ symbol, basePrice, drift, vol }: GenOption
     baseVolume *= 1 + (rand() - 0.5) * 0.01;
   }
 
-  return candles;
-}
-
-// Rough backwards estimate so the *final* price in the series lands near
-// the intended "current" basePrice from the symbol universe, without having
-// to do a second full pass.
-function priceIndexEstimate(drift: number, vol: number, days: number, seedKey: string): number {
-  const rand = seededRandom(seedKey + ':calib');
-  let idx = 1;
-  const dt = 1 / TRADING_DAYS_PER_YEAR;
-  for (let i = 0; i < days; i++) {
-    const shock = gaussian(rand);
-    const r = (drift - 0.5 * vol * vol) * dt + vol * Math.sqrt(dt) * shock;
-    idx *= 1 + r;
+  // Rescale so the final close is exactly the intended current price. The
+  // multiplicative walk is scale-invariant, so this preserves all returns,
+  // patterns, and indicator relationships.
+  const scale = basePrice / candles[candles.length - 1].close;
+  for (const c of candles) {
+    c.open = round2(c.open * scale);
+    c.high = round2(c.high * scale);
+    c.low = round2(Math.max(c.low * scale, 0.1));
+    c.close = round2(c.close * scale);
   }
-  return idx;
+
+  return candles;
 }
 
 function round2(v: number): number {

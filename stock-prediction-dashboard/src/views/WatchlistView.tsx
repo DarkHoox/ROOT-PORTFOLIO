@@ -38,22 +38,26 @@ export function WatchlistView() {
   );
 
   const runAlertScan = () => {
+    // Repeated scans must not spam duplicates: skip if an unread alert of the
+    // same type already exists for the symbol.
+    const hasUnread = (symbol: string, type: string) => alerts.some((a) => !a.read && a.symbol === symbol && a.type === type);
+
     for (const row of rows) {
       const { symbol, profile, verdict } = row;
 
       const prevSignal = prevSignals.current[symbol];
-      if (prevSignal && prevSignal !== verdict.signal) {
+      if (prevSignal && prevSignal !== verdict.signal && !hasUnread(symbol, 'signal-change')) {
         pushAlert({ symbol, type: 'signal-change', message: `Agregovaný signál se změnil na „${verdict.signal}“` });
       }
       prevSignals.current[symbol] = verdict.signal;
 
-      if (profile.earnings.nextEarningsDaysAway <= 5) {
+      if (profile.earnings.nextEarningsDaysAway <= 5 && !hasUnread(symbol, 'earnings-soon')) {
         pushAlert({ symbol, type: 'earnings-soon', message: `Earnings za ${profile.earnings.nextEarningsDaysAway} dní — očekávejte zvýšenou volatilitu` });
       }
 
       const levels = detectSupportResistance(profile.seriesDaily, 180, 0.015);
       const nearest = nearestLevel(row.price, levels);
-      if (nearest && nearest.distancePct < 1) {
+      if (nearest && nearest.distancePct < 1 && !hasUnread(symbol, 'level-breakout')) {
         pushAlert({
           symbol,
           type: 'level-breakout',

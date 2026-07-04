@@ -44,8 +44,13 @@ export function runBacktest(profile: StockProfile, weights: ModuleWeights, lookb
   const startIndex = Math.max(220, daily.length - lookbackDays);
   const signals: { time: number; signal: Signal; reason: string }[] = [];
 
+  // 450 trailing bars cover the longest indicator lookback (SMA200, Ichimoku
+  // senkou 52+26, S/R 180) while keeping the 252-day walk fast. Pattern
+  // success-rate stats see less history here than the live view — a speed
+  // tradeoff, not a signal change.
+  const MODULE_WINDOW = 450;
   for (let i = startIndex; i < daily.length; i += 1) {
-    const truncated = daily.slice(0, i + 1);
+    const truncated = daily.slice(Math.max(0, i + 1 - MODULE_WINDOW), i + 1);
     const tempProfile: StockProfile = { ...profile, seriesDaily: truncated };
     const modules = computeAllModules(tempProfile);
     const verdict = computeVerdict(modules, weights);
@@ -84,34 +89,43 @@ export function runBacktest(profile: StockProfile, weights: ModuleWeights, lookb
   const avgWinPct = wins.length > 0 ? wins.reduce((s, t) => s + t.returnPct, 0) / wins.length : 0;
   const avgLossPct = losses.length > 0 ? losses.reduce((s, t) => s + t.returnPct, 0) / losses.length : 0;
 
+  // Equity walk. Trades are non-overlapping and chronologically ordered (each
+  // exit happens strictly before the next entry), so a single cursor suffices.
+  // `realizedEquity` is the account value with no open position; while a trade
+  // is open, the curve shows entry-time equity marked to the day's close.
   const startPrice = daily[startIndex].close;
-  let strategyEquity = 100;
-  let buyHoldEquity = 100;
+  let realizedEquity = 100;
   const equityCurve: EquityPoint[] = [];
   let tradeCursor = 0;
-  let openPos: BacktestTrade | undefined;
+  let openPos: BacktestTrade | null = null;
+  let entryEquity = 100;
 
   for (let i = startIndex; i < daily.length; i += 1) {
-    while (tradeCursor < trades.length && trades[tradeCursor].exitTime <= daily[i].time && !openPos) {
-      strategyEquity *= 1 + trades[tradeCursor].returnPct / 100;
+    const time = daily[i].time;
+
+    // Realize a trade on its exit day, BEFORE marking, so the curve and the
+    // final total return include it (also covers a force-close on the last bar).
+    if (openPos && openPos.exitTime <= time) {
+      realizedEquity = entryEquity * (1 + openPos.returnPct / 100);
+      openPos = null;
+    }
+    if (!openPos && tradeCursor < trades.length && trades[tradeCursor].entryTime <= time) {
+      openPos = trades[tradeCursor];
+      entryEquity = realizedEquity;
       tradeCursor += 1;
     }
-    if (!openPos) {
-      const active = trades.find((t) => t.entryTime <= daily[i].time && t.exitTime >= daily[i].time);
-      openPos = active;
-    } else if (openPos.exitTime <= daily[i].time) {
-      openPos = trades.find((t) => t.entryTime <= daily[i].time && t.exitTime >= daily[i].time);
-    }
 
-    let markToMarket = strategyEquity;
+    let mark = realizedEquity;
     if (openPos) {
       const priceNow = daily[i].close;
-      const unrealized = openPos.side === 'long' ? (priceNow - openPos.entryPrice) / openPos.entryPrice : (openPos.entryPrice - priceNow) / openPos.entryPrice;
-      markToMarket = strategyEquity * (1 + unrealized);
+      const unrealized =
+        openPos.side === 'long'
+          ? (priceNow - openPos.entryPrice) / openPos.entryPrice
+          : (openPos.entryPrice - priceNow) / openPos.entryPrice;
+      mark = entryEquity * (1 + unrealized);
     }
 
-    buyHoldEquity = (daily[i].close / startPrice) * 100;
-    equityCurve.push({ time: daily[i].time, strategy: markToMarket, buyHold: buyHoldEquity });
+    equityCurve.push({ time, strategy: mark, buyHold: (daily[i].close / startPrice) * 100 });
   }
 
   let peak = -Infinity;

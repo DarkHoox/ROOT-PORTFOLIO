@@ -116,7 +116,6 @@ export function getStockProfile(symbolOrSeed: string | SymbolSeed): StockProfile
 
   const rand = seededRandom(`profile:${seed.symbol}`);
   const seriesDaily = generateDailySeries(seed);
-  const closes = seriesDaily.map((c) => c.close);
   const week52 = seriesDaily.slice(-252);
 
   const profile: StockProfile = {
@@ -133,8 +132,6 @@ export function getStockProfile(symbolOrSeed: string | SymbolSeed): StockProfile
     week52Low: Math.min(...week52.map((c) => c.low)),
     seriesDaily,
   };
-  // keep closes reference alive for potential future use without recompute
-  void closes;
 
   profileCache.set(seed.symbol, profile);
   return profile;
@@ -144,13 +141,14 @@ export function getAllProfiles(): StockProfile[] {
   return STOCK_UNIVERSE.map((s) => getStockProfile(s));
 }
 
+let indexQuotesCache: IndexQuote[] | null = null;
+
 export function getIndexQuotes(): IndexQuote[] {
-  return INDEX_UNIVERSE.map((idx) => {
-    const rand = seededRandom(`index:${idx.symbol}`);
+  if (indexQuotesCache) return indexQuotesCache;
+  indexQuotesCache = INDEX_UNIVERSE.map((idx) => {
     const series = generateDailySeries({ symbol: idx.symbol, basePrice: idx.basePrice, drift: idx.drift, vol: idx.vol });
     const last = series[series.length - 1];
     const prev = series[series.length - 2];
-    void rand;
     return {
       symbol: idx.symbol,
       name: idx.name,
@@ -158,6 +156,7 @@ export function getIndexQuotes(): IndexQuote[] {
       changePct: round1(((last.close - prev.close) / prev.close) * 100),
     };
   });
+  return indexQuotesCache;
 }
 
 export function getSectorPerformance(): { sector: string; changePct: number }[] {
