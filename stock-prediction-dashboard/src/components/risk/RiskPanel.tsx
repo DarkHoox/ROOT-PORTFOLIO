@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { StockProfile } from '../../types/market';
 import { atr } from '../../lib/indicators/volatility';
 import { lastValid } from '../../lib/indicators/movingAverages';
+import { useAppStore } from '../../state/store';
 import { Card } from '../common/Card';
 import { StatTile } from '../common/StatTile';
 
@@ -10,6 +11,9 @@ export function RiskPanel({ profile }: { profile: StockProfile }) {
   const [maxRiskPct, setMaxRiskPct] = useState(1);
   const [atrMultiplier, setAtrMultiplier] = useState(2);
   const [rrMultiple, setRrMultiple] = useState(2);
+  const [tradeConfirmation, setTradeConfirmation] = useState<string | null>(null);
+  const paperBuy = useAppStore((s) => s.paperBuy);
+  const paperCash = useAppStore((s) => s.paperCash);
 
   const entry = profile.seriesDaily[profile.seriesDaily.length - 1].close;
   const atrVal = useMemo(() => lastValid(atr(profile.seriesDaily, 14)) ?? entry * 0.02, [profile, entry]);
@@ -89,6 +93,21 @@ export function RiskPanel({ profile }: { profile: StockProfile }) {
               )}
             </div>
           )}
+
+          <button
+            onClick={() => {
+              paperBuy(profile.meta.symbol, shares, entry);
+              setTradeConfirmation(`Otevřeno: ${shares} ks ${profile.meta.symbol} @ $${entry.toFixed(2)} ve virtuálním portfoliu.`);
+            }}
+            disabled={shares === 0 || shares * entry > paperCash}
+            className="w-full rounded-md border border-accent-dim bg-accent-dim/20 py-2 text-sm font-semibold text-accent transition-colors hover:bg-accent-dim/40 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Otevřít pozici v paper tradingu ({shares} ks za ${(shares * entry).toLocaleString('en-US', { maximumFractionDigits: 0 })})
+          </button>
+          {tradeConfirmation && <p className="text-xs text-up">✓ {tradeConfirmation}</p>}
+          <p className="text-[11px] text-ink-muted">
+            Virtuální obchod s fiktivními penězi — stop-loss a cíl si v paper tradingu hlídáte ručně.
+          </p>
         </div>
       </div>
     </Card>

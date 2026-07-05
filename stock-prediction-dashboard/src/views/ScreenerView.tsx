@@ -11,35 +11,56 @@ export function ScreenerView() {
   const selectSymbol = useAppStore((s) => s.selectSymbol);
   const toggleWatchlist = useAppStore((s) => s.toggleWatchlist);
   const watchlist = useAppStore((s) => s.watchlist);
+  const sector = useAppStore((s) => s.screenerSector);
+  const setSector = useAppStore((s) => s.setScreenerSector);
 
-  const [minBullish, setMinBullish] = useState(6);
-  const [sector, setSector] = useState<'all' | (typeof SECTORS)[number]>('all');
+  const [direction, setDirection] = useState<'buy' | 'sell'>('buy');
+  const [minSignals, setMinSignals] = useState(6);
   const [capBucket, setCapBucket] = useState<MarketCapBucket>('all');
   const [volBucket, setVolBucket] = useState<VolatilityBucket>('all');
 
   const rows = useMemo(() => buildScreenerRows(weights), [weights]);
 
+  const signalCount = (r: (typeof rows)[number]) => (direction === 'buy' ? r.bullishCount : r.bearishCount);
   const filtered = rows
-    .filter((r) => r.bullishCount >= minBullish)
+    .filter((r) => signalCount(r) >= minSignals)
     .filter((r) => sector === 'all' || r.sector === sector)
     .filter((r) => matchesMarketCap(r, capBucket))
     .filter((r) => matchesVolatility(r, volBucket))
-    .sort((a, b) => b.bullishCount - a.bullishCount);
+    .sort((a, b) => signalCount(b) - signalCount(a));
 
   return (
     <div className="space-y-4">
-      <h1 className="text-lg font-semibold text-ink-primary">Screener</h1>
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="text-lg font-semibold text-ink-primary">Screener</h1>
+        <div className="flex rounded-md border border-border bg-surface-2 p-0.5 text-xs font-semibold">
+          <button
+            onClick={() => setDirection('buy')}
+            className={direction === 'buy' ? 'rounded bg-up px-3 py-1.5 text-white' : 'rounded px-3 py-1.5 text-ink-secondary hover:text-ink-primary'}
+          >
+            ▲ Nákupní signály
+          </button>
+          <button
+            onClick={() => setDirection('sell')}
+            className={direction === 'sell' ? 'rounded bg-down px-3 py-1.5 text-white' : 'rounded px-3 py-1.5 text-ink-secondary hover:text-ink-primary'}
+          >
+            ▼ Prodejní signály
+          </button>
+        </div>
+      </div>
 
       <Card>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div>
-            <label className="text-xs text-ink-muted">Min. počet modulů s růstovým signálem: {minBullish}/9</label>
+            <label className="text-xs text-ink-muted">
+              Min. počet modulů se signálem {direction === 'buy' ? 'růstu' : 'poklesu'}: {minSignals}/9
+            </label>
             <input
               type="range"
               min={0}
               max={9}
-              value={minBullish}
-              onChange={(e) => setMinBullish(Number(e.target.value))}
+              value={minSignals}
+              onChange={(e) => setMinSignals(Number(e.target.value))}
               className="mt-2 h-1.5 w-full cursor-pointer accent-accent"
             />
           </div>
@@ -47,7 +68,7 @@ export function ScreenerView() {
             <label className="text-xs text-ink-muted">Sektor</label>
             <select
               value={sector}
-              onChange={(e) => setSector(e.target.value as typeof sector)}
+              onChange={(e) => setSector(e.target.value as 'all' | (typeof SECTORS)[number])}
               className="mt-1.5 w-full rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-sm text-ink-primary"
             >
               <option value="all">Všechny sektory</option>
@@ -88,7 +109,10 @@ export function ScreenerView() {
         </div>
       </Card>
 
-      <Card title={`Výsledky (${filtered.length})`} subtitle="Řazeno podle počtu modulů s růstovým signálem">
+      <Card
+        title={`Výsledky (${filtered.length})`}
+        subtitle={`Řazeno podle počtu modulů se signálem ${direction === 'buy' ? 'růstu' : 'poklesu'}`}
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>

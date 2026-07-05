@@ -8,6 +8,7 @@ import { detectSupportResistance, nearestLevel } from '../lib/indicators/levels'
 import { useAppStore } from '../state/store';
 import { Card } from '../components/common/Card';
 import { SignalBadge } from '../components/common/SignalBadge';
+import { Sparkline } from '../components/common/Sparkline';
 import { AlertsList } from '../components/watchlist/AlertsList';
 
 export function WatchlistView() {
@@ -109,6 +110,9 @@ export function WatchlistView() {
                       <div className="text-sm font-semibold text-ink-primary">{r.symbol}</div>
                       <div className="text-xs text-ink-muted">{r.profile.meta.name}</div>
                     </button>
+                    <div className="hidden sm:block" title="Posledních 30 obchodních dní">
+                      <Sparkline values={r.profile.seriesDaily.slice(-30).map((c) => c.close)} />
+                    </div>
                     <div className="tabular text-right text-sm text-ink-secondary">${r.price.toFixed(2)}</div>
                     <div className={clsx('tabular w-16 text-right text-sm font-medium', r.changePct >= 0 ? 'text-up' : 'text-down')}>
                       {r.changePct >= 0 ? '+' : ''}

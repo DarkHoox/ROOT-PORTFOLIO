@@ -5,17 +5,27 @@ import { STOCK_UNIVERSE } from '../data/symbols';
 import { candlesForRange } from '../lib/rangeUtils';
 import { computeAllModules } from '../lib/modules';
 import { computeVerdict } from '../lib/modules/aggregate';
+import { classicPivotPoints, detectSupportResistance } from '../lib/indicators/levels';
 import { useAppStore } from '../state/store';
-import { CandlestickChart, type IndicatorToggles } from '../components/stock/CandlestickChart';
+import { CandlestickChart, type IndicatorToggles, type PriceLevel } from '../components/stock/CandlestickChart';
 import { RangeSelector, type RangeId } from '../components/stock/RangeSelector';
 import { IndicatorToggleBar } from '../components/stock/IndicatorToggleBar';
 import { KeyStats } from '../components/stock/KeyStats';
+import { NewsPanel } from '../components/stock/NewsPanel';
 import { ModuleGrid } from '../components/modules/ModuleGrid';
 import { VerdictPanel } from '../components/verdict/VerdictPanel';
 import { RiskPanel } from '../components/risk/RiskPanel';
 import { Card } from '../components/common/Card';
 
-const DEFAULT_INDICATORS: IndicatorToggles = { sma20: true, sma50: true, sma200: false, ema20: false, bollinger: false };
+const DEFAULT_INDICATORS: IndicatorToggles = {
+  sma20: true,
+  sma50: true,
+  sma200: false,
+  ema20: false,
+  bollinger: false,
+  levels: false,
+  rsi: false,
+};
 
 export function StockDetailView() {
   const selectedSymbol = useAppStore((s) => s.selectedSymbol);
@@ -41,6 +51,19 @@ export function StockDetailView() {
 
   const modules = useMemo(() => computeAllModules(profile), [profile]);
   const verdict = useMemo(() => computeVerdict(modules, weights), [modules, weights]);
+
+  const priceLevels = useMemo<PriceLevel[]>(() => {
+    const daily = profile.seriesDaily;
+    const levels = detectSupportResistance(daily, 180, 0.015)
+      .slice(0, 4)
+      .map((l) => ({
+        price: l.price,
+        kind: l.type,
+        label: `${l.type === 'support' ? 'S' : 'R'} (${l.strength}×)`,
+      }));
+    const pivots = classicPivotPoints(daily[daily.length - 2]);
+    return [...levels, { price: pivots.pivot, kind: 'pivot' as const, label: 'Pivot' }];
+  }, [profile]);
 
   const last = profile.seriesDaily[profile.seriesDaily.length - 1];
   const prev = profile.seriesDaily[profile.seriesDaily.length - 2];
@@ -88,7 +111,7 @@ export function StockDetailView() {
           <IndicatorToggleBar value={indicators} onChange={setIndicators} />
           <RangeSelector value={range} onChange={setRange} />
         </div>
-        <CandlestickChart candles={displayCandles} indicators={indicators} indicatorSource={indicatorSource} />
+        <CandlestickChart candles={displayCandles} indicators={indicators} indicatorSource={indicatorSource} priceLevels={priceLevels} />
       </Card>
 
       <KeyStats profile={profile} />
@@ -107,7 +130,10 @@ export function StockDetailView() {
         <ModuleGrid modules={modules} />
       </div>
 
-      <RiskPanel profile={profile} />
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <RiskPanel profile={profile} />
+        <NewsPanel news={profile.news} />
+      </div>
     </div>
   );
 }

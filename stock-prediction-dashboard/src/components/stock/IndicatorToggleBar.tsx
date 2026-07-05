@@ -7,6 +7,8 @@ const LABELS: { key: keyof IndicatorToggles; label: string; color: string }[] = 
   { key: 'sma200', label: 'SMA 200', color: '#d55181' },
   { key: 'ema20', label: 'EMA 20', color: '#9085e9' },
   { key: 'bollinger', label: 'Bollinger Bands', color: '#9aa1ac' },
+  { key: 'levels', label: 'Úrovně S/R', color: '#1fae5d' },
+  { key: 'rsi', label: 'RSI panel', color: '#9085e9' },
 ];
 
 export function IndicatorToggleBar({ value, onChange }: { value: IndicatorToggles; onChange: (v: IndicatorToggles) => void }) {

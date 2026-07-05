@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
 import { getSectorPerformance } from '../../data/mockData';
+import { useAppStore } from '../../state/store';
+import type { Sector } from '../../types/market';
 import { Card } from '../common/Card';
 
 const MAX_ABS = 3; // %, scale clamp for color intensity
@@ -17,15 +19,17 @@ function cellStyle(changePct: number): React.CSSProperties {
 
 export function SectorHeatmap() {
   const sectors = useMemo(() => getSectorPerformance(), []);
+  const openScreenerForSector = useAppStore((s) => s.openScreenerForSector);
   const sorted = [...sectors].sort((a, b) => b.changePct - a.changePct);
 
   return (
-    <Card title="Heatmapa sektorů" subtitle="Průměrná denní změna napříč akciemi v sektoru">
+    <Card title="Heatmapa sektorů" subtitle="Průměrná denní změna napříč akciemi v sektoru — kliknutím otevřete screener">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
         {sorted.map((s) => (
-          <div
+          <button
             key={s.sector}
-            className="flex flex-col justify-between rounded-md border px-3 py-3"
+            onClick={() => openScreenerForSector(s.sector as Sector)}
+            className="flex flex-col justify-between rounded-md border px-3 py-3 text-left transition-transform hover:scale-[1.02]"
             style={cellStyle(s.changePct)}
           >
             <span className="text-xs font-medium text-ink-secondary">{s.sector}</span>
@@ -33,7 +37,7 @@ export function SectorHeatmap() {
               {s.changePct >= 0 ? '▲' : '▼'} {s.changePct >= 0 ? '+' : ''}
               {s.changePct.toFixed(2)}%
             </span>
-          </div>
+          </button>
         ))}
       </div>
     </Card>

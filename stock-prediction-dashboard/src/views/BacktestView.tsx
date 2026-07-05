@@ -1,12 +1,27 @@
 import { useEffect, useState } from 'react';
 import { getStockProfile } from '../data/mockData';
 import { STOCK_UNIVERSE } from '../data/symbols';
-import { runBacktest, type BacktestResult } from '../lib/backtest';
+import { runBacktest, type BacktestResult, type BacktestTrade } from '../lib/backtest';
 import { useAppStore } from '../state/store';
 import { Card } from '../components/common/Card';
 import { StatTile } from '../components/common/StatTile';
 import { EquityCurveChart } from '../components/backtest/EquityCurveChart';
 import { TradeLog } from '../components/backtest/TradeLog';
+
+function exportTradesCsv(symbol: string, trades: BacktestTrade[]) {
+  const header = 'entry_date,exit_date,side,entry_price,exit_price,holding_days,return_pct,win';
+  const fmtDate = (t: number) => new Date(t * 1000).toISOString().slice(0, 10);
+  const rows = trades.map((t) =>
+    [fmtDate(t.entryTime), fmtDate(t.exitTime), t.side, t.entryPrice.toFixed(2), t.exitPrice.toFixed(2), t.holdingDays, t.returnPct.toFixed(2), t.win ? 1 : 0].join(','),
+  );
+  const blob = new Blob([[header, ...rows].join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `backtest-${symbol}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export function BacktestView() {
   const globalSymbol = useAppStore((s) => s.selectedSymbol);
@@ -63,7 +78,20 @@ export function BacktestView() {
             <EquityCurveChart equityCurve={result.equityCurve} />
           </Card>
 
-          <Card title="Historie obchodů" subtitle={`${result.trades.length} obchodů za posledních 12 měsíců`}>
+          <Card
+            title="Historie obchodů"
+            subtitle={`${result.trades.length} obchodů za posledních 12 měsíců`}
+            action={
+              result.trades.length > 0 && (
+                <button
+                  onClick={() => exportTradesCsv(symbol, result.trades)}
+                  className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink-secondary hover:text-accent"
+                >
+                  ⬇ Export CSV
+                </button>
+              )
+            }
+          >
             <TradeLog trades={result.trades} />
           </Card>
 

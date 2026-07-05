@@ -4,14 +4,17 @@ import {
   ColorType,
   HistogramSeries,
   LineSeries,
+  LineStyle,
   createChart,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
   type UTCTimestamp,
 } from 'lightweight-charts';
 import type { Candle } from '../../types/market';
 import { bollingerBands } from '../../lib/indicators/volatility';
 import { ema, sma } from '../../lib/indicators/movingAverages';
+import { rsi } from '../../lib/indicators/momentum';
 
 export interface IndicatorToggles {
   sma20: boolean;
@@ -19,24 +22,37 @@ export interface IndicatorToggles {
   sma200: boolean;
   ema20: boolean;
   bollinger: boolean;
+  levels: boolean;
+  rsi: boolean;
+}
+
+export interface PriceLevel {
+  price: number;
+  kind: 'support' | 'resistance' | 'pivot';
+  label: string;
 }
 
 export function CandlestickChart({
   candles,
   indicators,
   indicatorSource,
+  priceLevels = [],
 }: {
   candles: Candle[];
   indicators: IndicatorToggles;
   /** Full-history series (same granularity, of which `candles` is the trailing slice) used to seed
    * moving-average lookbacks — without this, a short display window can't render an SMA200. */
   indicatorSource?: Candle[];
+  /** Detected S/R + pivot levels drawn as horizontal price lines when the toggle is on. */
+  priceLevels?: PriceLevel[];
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const overlaySeriesRef = useRef<Record<string, ISeriesApi<'Line'>>>({});
+  const priceLinesRef = useRef<IPriceLine[]>([]);
+  const rsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -79,6 +95,8 @@ export function CandlestickChart({
       chart.remove();
       chartRef.current = null;
       overlaySeriesRef.current = {};
+      priceLinesRef.current = [];
+      rsiSeriesRef.current = null;
     };
   }, []);
 
@@ -150,5 +168,57 @@ export function CandlestickChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candles, indicators, indicatorSource]);
 
-  return <div ref={containerRef} className="h-[420px] w-full" />;
+  // Horizontal S/R + pivot price lines on the main pane.
+  useEffect(() => {
+    const series = candleSeriesRef.current;
+    if (!series) return;
+    for (const line of priceLinesRef.current) series.removePriceLine(line);
+    priceLinesRef.current = [];
+    if (!indicators.levels) return;
+
+    const colorFor = (kind: PriceLevel['kind']) =>
+      kind === 'support' ? '#1fae5d' : kind === 'resistance' ? '#e5484d' : '#f0a202';
+    for (const level of priceLevels) {
+      priceLinesRef.current.push(
+        series.createPriceLine({
+          price: level.price,
+          color: colorFor(level.kind),
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: level.label,
+        }),
+      );
+    }
+  }, [indicators.levels, priceLevels, candles]);
+
+  // RSI(14) oscillator in a second pane.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    if (indicators.rsi) {
+      const source = indicatorSource && indicatorSource.length >= candles.length ? indicatorSource : candles;
+      const values = rsi(source.map((c) => c.close), 14);
+      const aligned = values.slice(values.length - candles.length);
+      if (!rsiSeriesRef.current) {
+        rsiSeriesRef.current = chart.addSeries(
+          LineSeries,
+          { color: '#9085e9', lineWidth: 2, priceLineVisible: false, lastValueVisible: true },
+          1,
+        );
+        rsiSeriesRef.current.createPriceLine({ price: 70, color: '#5b6270', lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false, title: '' });
+        rsiSeriesRef.current.createPriceLine({ price: 30, color: '#5b6270', lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false, title: '' });
+      }
+      rsiSeriesRef.current.setData(
+        candles
+          .map((c, i) => ({ time: c.time as UTCTimestamp, value: aligned[i] }))
+          .filter((d): d is { time: UTCTimestamp; value: number } => d.value !== null),
+      );
+    } else if (rsiSeriesRef.current) {
+      chart.removeSeries(rsiSeriesRef.current);
+      rsiSeriesRef.current = null;
+    }
+  }, [indicators.rsi, candles, indicatorSource]);
+
+  return <div ref={containerRef} className={indicators.rsi ? 'h-[540px] w-full' : 'h-[420px] w-full'} />;
 }

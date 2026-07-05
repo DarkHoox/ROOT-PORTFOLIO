@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { PROFILE_WEIGHTS } from '../lib/modules/aggregate';
-import type { ModuleWeights, PaperPosition, PaperTrade, TraderProfile, WatchlistAlert } from '../types/market';
+import type { ModuleWeights, PaperPosition, PaperTrade, Sector, TraderProfile, WatchlistAlert } from '../types/market';
 
 export type ViewId = 'dashboard' | 'stock' | 'screener' | 'watchlist' | 'backtest' | 'papertrading';
 
@@ -16,9 +16,12 @@ interface AppState {
   paperCash: number;
   paperPositions: Record<string, PaperPosition>;
   paperTrades: PaperTrade[];
+  screenerSector: 'all' | Sector;
 
   setActiveView: (view: ViewId) => void;
   selectSymbol: (symbol: string) => void;
+  openScreenerForSector: (sector: 'all' | Sector) => void;
+  setScreenerSector: (sector: 'all' | Sector) => void;
   setTraderProfile: (profile: TraderProfile) => void;
   setWeight: (moduleId: keyof ModuleWeights, value: number) => void;
   resetWeightsToProfile: () => void;
@@ -59,8 +62,12 @@ export const useAppStore = create<AppState>((set) => ({
   paperPositions: {},
   paperTrades: [],
 
+  screenerSector: 'all',
+
   setActiveView: (view) => set({ activeView: view }),
   selectSymbol: (symbol) => set({ selectedSymbol: symbol, activeView: 'stock' }),
+  openScreenerForSector: (sector) => set({ screenerSector: sector, activeView: 'screener' }),
+  setScreenerSector: (sector) => set({ screenerSector: sector }),
   setTraderProfile: (profile) => set({ traderProfile: profile, weights: { ...PROFILE_WEIGHTS[profile] } }),
   setWeight: (moduleId, value) => set((s) => ({ weights: { ...s.weights, [moduleId]: value } })),
   resetWeightsToProfile: () => set((s) => ({ weights: { ...PROFILE_WEIGHTS[s.traderProfile] } })),
