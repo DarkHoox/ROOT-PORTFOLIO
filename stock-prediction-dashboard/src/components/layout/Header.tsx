@@ -3,6 +3,7 @@ import { useAppStore, type ViewId } from '../../state/store';
 
 const NAV: { id: ViewId; label: string }[] = [
   { id: 'dashboard', label: 'Dashboard' },
+  { id: 'recommendations', label: 'Doporučení' },
   { id: 'stock', label: 'Detail akcie' },
   { id: 'screener', label: 'Screener' },
   { id: 'watchlist', label: 'Watchlist' },

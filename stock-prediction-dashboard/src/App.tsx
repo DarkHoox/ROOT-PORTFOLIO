@@ -4,6 +4,7 @@ import { Header } from './components/layout/Header';
 import { useAppStore } from './state/store';
 import { DashboardView } from './views/DashboardView';
 
+const RecommendationsView = lazy(() => import('./views/RecommendationsView').then((m) => ({ default: m.RecommendationsView })));
 const StockDetailView = lazy(() => import('./views/StockDetailView').then((m) => ({ default: m.StockDetailView })));
 const ScreenerView = lazy(() => import('./views/ScreenerView').then((m) => ({ default: m.ScreenerView })));
 const WatchlistView = lazy(() => import('./views/WatchlistView').then((m) => ({ default: m.WatchlistView })));
@@ -24,6 +25,7 @@ function App() {
       <main className="mx-auto w-full max-w-[1600px] flex-1 px-4 py-5">
         <Suspense fallback={<ViewFallback />}>
           {activeView === 'dashboard' && <DashboardView />}
+          {activeView === 'recommendations' && <RecommendationsView />}
           {activeView === 'stock' && <StockDetailView />}
           {activeView === 'screener' && <ScreenerView />}
           {activeView === 'watchlist' && <WatchlistView />}
