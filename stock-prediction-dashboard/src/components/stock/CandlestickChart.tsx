@@ -6,9 +6,12 @@ import {
   LineSeries,
   LineStyle,
   createChart,
+  createSeriesMarkers,
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  type Time,
   type UTCTimestamp,
 } from 'lightweight-charts';
 import type { Candle } from '../../types/market';
@@ -32,11 +35,17 @@ export interface PriceLevel {
   label: string;
 }
 
+export interface TradeMarker {
+  time: number;
+  type: 'buy' | 'sell';
+}
+
 export function CandlestickChart({
   candles,
   indicators,
   indicatorSource,
   priceLevels = [],
+  tradeMarkers = [],
 }: {
   candles: Candle[];
   indicators: IndicatorToggles;
@@ -45,6 +54,8 @@ export function CandlestickChart({
   indicatorSource?: Candle[];
   /** Detected S/R + pivot levels drawn as horizontal price lines when the toggle is on. */
   priceLevels?: PriceLevel[];
+  /** Signal-engine buy/sell events shown as arrows on matching bars. */
+  tradeMarkers?: TradeMarker[];
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -53,6 +64,7 @@ export function CandlestickChart({
   const overlaySeriesRef = useRef<Record<string, ISeriesApi<'Line'>>>({});
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const rsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -97,6 +109,7 @@ export function CandlestickChart({
       overlaySeriesRef.current = {};
       priceLinesRef.current = [];
       rsiSeriesRef.current = null;
+      markersPluginRef.current = null;
     };
   }, []);
 
@@ -219,6 +232,39 @@ export function CandlestickChart({
       rsiSeriesRef.current = null;
     }
   }, [indicators.rsi, candles, indicatorSource]);
+
+  // Buy/sell arrows from the signal engine, drawn only on bars present in the
+  // displayed series (times from other granularities would misplace).
+  useEffect(() => {
+    const series = candleSeriesRef.current;
+    if (!series) return;
+    const candleTimes = new Set(candles.map((c) => c.time));
+    const markers = tradeMarkers
+      .filter((m) => candleTimes.has(m.time))
+      .sort((a, b) => a.time - b.time)
+      .map((m) =>
+        m.type === 'buy'
+          ? {
+              time: m.time as UTCTimestamp,
+              position: 'belowBar' as const,
+              color: '#1fae5d',
+              shape: 'arrowUp' as const,
+              text: 'BUY',
+            }
+          : {
+              time: m.time as UTCTimestamp,
+              position: 'aboveBar' as const,
+              color: '#e5484d',
+              shape: 'arrowDown' as const,
+              text: 'SELL',
+            },
+      );
+    if (!markersPluginRef.current) {
+      markersPluginRef.current = createSeriesMarkers(series, markers);
+    } else {
+      markersPluginRef.current.setMarkers(markers);
+    }
+  }, [tradeMarkers, candles]);
 
   return <div ref={containerRef} className={indicators.rsi ? 'h-[540px] w-full' : 'h-[420px] w-full'} />;
 }

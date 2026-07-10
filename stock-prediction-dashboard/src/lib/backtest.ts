@@ -1,6 +1,5 @@
-import type { ModuleWeights, Signal, StockProfile } from '../types/market';
-import { computeAllModules } from './modules';
-import { computeVerdict } from './modules/aggregate';
+import type { ModuleWeights, StockProfile } from '../types/market';
+import { computeDailyVerdicts } from './dailyVerdicts';
 
 export interface BacktestTrade {
   side: 'long' | 'short';
@@ -41,21 +40,9 @@ export interface BacktestResult {
  */
 export function runBacktest(profile: StockProfile, weights: ModuleWeights, lookbackDays = 252): BacktestResult {
   const daily = profile.seriesDaily;
-  const startIndex = Math.max(220, daily.length - lookbackDays);
-  const signals: { time: number; signal: Signal; reason: string }[] = [];
-
-  // 450 trailing bars cover the longest indicator lookback (SMA200, Ichimoku
-  // senkou 52+26, S/R 180) while keeping the 252-day walk fast. Pattern
-  // success-rate stats see less history here than the live view — a speed
-  // tradeoff, not a signal change.
-  const MODULE_WINDOW = 450;
-  for (let i = startIndex; i < daily.length; i += 1) {
-    const truncated = daily.slice(Math.max(0, i + 1 - MODULE_WINDOW), i + 1);
-    const tempProfile: StockProfile = { ...profile, seriesDaily: truncated };
-    const modules = computeAllModules(tempProfile);
-    const verdict = computeVerdict(modules, weights);
-    signals.push({ time: daily[i].time, signal: verdict.signal, reason: verdict.topReason });
-  }
+  const verdicts = computeDailyVerdicts(profile, weights, lookbackDays);
+  const startIndex = verdicts.length > 0 ? verdicts[0].index : Math.max(220, daily.length - lookbackDays);
+  const signals = verdicts.map((v) => ({ time: v.time, signal: v.signal, reason: v.reason }));
 
   const trades: BacktestTrade[] = [];
   let position: { side: 'long' | 'short'; entryIndex: number; entryPrice: number; reason: string } | null = null;
@@ -83,21 +70,38 @@ export function runBacktest(profile: StockProfile, weights: ModuleWeights, lookb
     trades.push(closeTrade(position, lastIndex, daily[lastIndex].close, daily));
   }
 
-  const wins = trades.filter((t) => t.win);
-  const losses = trades.filter((t) => !t.win);
-  const winRate = trades.length > 0 ? (wins.length / trades.length) * 100 : 0;
-  const avgWinPct = wins.length > 0 ? wins.reduce((s, t) => s + t.returnPct, 0) / wins.length : 0;
-  const avgLossPct = losses.length > 0 ? losses.reduce((s, t) => s + t.returnPct, 0) / losses.length : 0;
+  const equityCurve = buildEquityCurve(daily, startIndex, trades);
+  const stats = summarizeTrades(trades, equityCurve);
 
-  // Equity walk. Trades are non-overlapping and chronologically ordered (each
-  // exit happens strictly before the next entry), so a single cursor suffices.
-  // `realizedEquity` is the account value with no open position; while a trade
-  // is open, the curve shows entry-time equity marked to the day's close.
+  return {
+    trades,
+    equityCurve,
+    ...stats,
+    failedTrades: trades.filter((t) => !t.win),
+  };
+}
+
+export interface TradeLike {
+  side: 'long' | 'short';
+  entryTime: number;
+  entryPrice: number;
+  exitTime: number;
+  returnPct: number;
+  win: boolean;
+}
+
+/**
+ * Equity walk shared by both strategies. Trades must be non-overlapping and
+ * chronologically ordered (each exit strictly before the next entry).
+ * `realizedEquity` is the account value with no open position; while a trade
+ * is open, the curve shows entry-time equity marked to the day's close.
+ */
+export function buildEquityCurve(daily: StockProfile['seriesDaily'], startIndex: number, trades: TradeLike[]): EquityPoint[] {
   const startPrice = daily[startIndex].close;
   let realizedEquity = 100;
   const equityCurve: EquityPoint[] = [];
   let tradeCursor = 0;
-  let openPos: BacktestTrade | null = null;
+  let openPos: TradeLike | null = null;
   let entryEquity = 100;
 
   for (let i = startIndex; i < daily.length; i += 1) {
@@ -128,6 +132,22 @@ export function runBacktest(profile: StockProfile, weights: ModuleWeights, lookb
     equityCurve.push({ time, strategy: mark, buyHold: (daily[i].close / startPrice) * 100 });
   }
 
+  return equityCurve;
+}
+
+export interface TradeStats {
+  winRate: number;
+  avgWinPct: number;
+  avgLossPct: number;
+  maxDrawdownPct: number;
+  totalReturnPct: number;
+  buyHoldReturnPct: number;
+}
+
+export function summarizeTrades(trades: { returnPct: number; win: boolean }[], equityCurve: EquityPoint[]): TradeStats {
+  const wins = trades.filter((t) => t.win);
+  const losses = trades.filter((t) => !t.win);
+
   let peak = -Infinity;
   let maxDrawdownPct = 0;
   for (const p of equityCurve) {
@@ -136,19 +156,13 @@ export function runBacktest(profile: StockProfile, weights: ModuleWeights, lookb
     maxDrawdownPct = Math.max(maxDrawdownPct, dd);
   }
 
-  const totalReturnPct = equityCurve.length > 0 ? equityCurve[equityCurve.length - 1].strategy - 100 : 0;
-  const buyHoldReturnPct = equityCurve.length > 0 ? equityCurve[equityCurve.length - 1].buyHold - 100 : 0;
-
   return {
-    trades,
-    equityCurve,
-    winRate,
-    avgWinPct,
-    avgLossPct,
+    winRate: trades.length > 0 ? (wins.length / trades.length) * 100 : 0,
+    avgWinPct: wins.length > 0 ? wins.reduce((s, t) => s + t.returnPct, 0) / wins.length : 0,
+    avgLossPct: losses.length > 0 ? losses.reduce((s, t) => s + t.returnPct, 0) / losses.length : 0,
     maxDrawdownPct,
-    totalReturnPct,
-    buyHoldReturnPct,
-    failedTrades: losses,
+    totalReturnPct: equityCurve.length > 0 ? equityCurve[equityCurve.length - 1].strategy - 100 : 0,
+    buyHoldReturnPct: equityCurve.length > 0 ? equityCurve[equityCurve.length - 1].buyHold - 100 : 0,
   };
 }
 

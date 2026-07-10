@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { getStockProfile } from '../data/mockData';
 import { resampleToHourlyApprox, resampleToWeekly } from '../data/generateSeries';
 import { STOCK_UNIVERSE } from '../data/symbols';
@@ -6,12 +6,14 @@ import { candlesForRange } from '../lib/rangeUtils';
 import { computeAllModules } from '../lib/modules';
 import { computeVerdict } from '../lib/modules/aggregate';
 import { classicPivotPoints, detectSupportResistance } from '../lib/indicators/levels';
+import { runSignalEngine, type EngineResult } from '../lib/signalEngine';
 import { useAppStore } from '../state/store';
-import { CandlestickChart, type IndicatorToggles, type PriceLevel } from '../components/stock/CandlestickChart';
+import { CandlestickChart, type IndicatorToggles, type PriceLevel, type TradeMarker } from '../components/stock/CandlestickChart';
 import { RangeSelector, type RangeId } from '../components/stock/RangeSelector';
 import { IndicatorToggleBar } from '../components/stock/IndicatorToggleBar';
 import { KeyStats } from '../components/stock/KeyStats';
 import { NewsPanel } from '../components/stock/NewsPanel';
+import { TradeSignalCard } from '../components/stock/TradeSignalCard';
 import { ModuleGrid } from '../components/modules/ModuleGrid';
 import { VerdictPanel } from '../components/verdict/VerdictPanel';
 import { RiskPanel } from '../components/risk/RiskPanel';
@@ -51,6 +53,20 @@ export function StockDetailView() {
 
   const modules = useMemo(() => computeAllModules(profile), [profile]);
   const verdict = useMemo(() => computeVerdict(modules, weights), [modules, weights]);
+
+  // Walk-forward signal engine — first run per symbol costs ~2s (cached after),
+  // so it computes async behind a loading state instead of blocking the render.
+  const [engine, setEngine] = useState<EngineResult | null>(null);
+  useEffect(() => {
+    setEngine(null);
+    const t = setTimeout(() => setEngine(runSignalEngine(profile, weights)), 30);
+    return () => clearTimeout(t);
+  }, [profile, weights]);
+
+  const tradeMarkers = useMemo<TradeMarker[]>(
+    () => (engine ? engine.events.map((e) => ({ time: e.time, type: e.type })) : []),
+    [engine],
+  );
 
   const priceLevels = useMemo<PriceLevel[]>(() => {
     const daily = profile.seriesDaily;
@@ -111,8 +127,16 @@ export function StockDetailView() {
           <IndicatorToggleBar value={indicators} onChange={setIndicators} />
           <RangeSelector value={range} onChange={setRange} />
         </div>
-        <CandlestickChart candles={displayCandles} indicators={indicators} indicatorSource={indicatorSource} priceLevels={priceLevels} />
+        <CandlestickChart
+          candles={displayCandles}
+          indicators={indicators}
+          indicatorSource={indicatorSource}
+          priceLevels={priceLevels}
+          tradeMarkers={tradeMarkers}
+        />
       </Card>
+
+      <TradeSignalCard engine={engine} loading={engine === null} />
 
       <KeyStats profile={profile} />
 
