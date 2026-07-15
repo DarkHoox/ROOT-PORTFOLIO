@@ -4,8 +4,9 @@ import { computeVerdict } from './modules/aggregate';
 import { atr } from './indicators/volatility';
 import { lastValid } from './indicators/movingAverages';
 import type { ModuleWeights, Sector } from '../types/market';
+import type { SymbolAssessment } from './assessment';
 
-export interface InvestmentPick {
+export interface Candidate {
   symbol: string;
   name: string;
   sector: Sector;
@@ -14,9 +15,6 @@ export interface InvestmentPick {
   bullishCount: number;
   reason: string;
   beta: number;
-  allocationPct: number;
-  amount: number;
-  shares: number;
   stopLoss: number;
   target: number;
   spark: number[];
@@ -27,91 +25,110 @@ export interface AvoidItem {
   symbol: string;
   name: string;
   sector: Sector;
-  price: number;
   confidence: number;
   bearishCount: number;
   reason: string;
 }
 
-export interface InvestmentPlan {
-  picks: InvestmentPick[];
-  avoid: AvoidItem[];
-  cashPct: number; // unallocated remainder kept as cash
-}
-
-const MAX_PICKS = 6;
+const MAX_CANDIDATES = 8;
 const MAX_PER_SECTOR = 2; // diversification guard — never all-in on one sector
 const MAX_SINGLE_ALLOCATION_PCT = 35;
 
-/**
- * Ranks the whole universe by the aggregated verdict under the current
- * weights, keeps only bullish names, enforces a sector cap, and sizes
- * positions by risk-adjusted conviction (confidence / beta). Anything the
- * cap leaves unallocated stays as cash — the plan never forces 100% equity.
- */
-export function buildInvestmentPlan(weights: ModuleWeights, capital: number): InvestmentPlan {
+/** Fast snapshot pass: bullish verdicts across the universe, sector-capped, ranked by confidence. */
+export function selectCandidates(weights: ModuleWeights, maxCandidates = MAX_CANDIDATES): Candidate[] {
   const scored = getAllProfiles().map((profile) => {
-    const modules = computeAllModules(profile);
-    const verdict = computeVerdict(modules, weights);
-    const price = profile.seriesDaily[profile.seriesDaily.length - 1].close;
-    return { profile, verdict, price };
+    const verdict = computeVerdict(computeAllModules(profile), weights);
+    return { profile, verdict };
   });
 
   const bullish = scored
     .filter((s) => s.verdict.signal === 'up')
     .sort((a, b) => b.verdict.confidence - a.verdict.confidence);
 
-  const selected: typeof bullish = [];
+  const candidates: Candidate[] = [];
   const perSector = new Map<string, number>();
   for (const s of bullish) {
-    if (selected.length >= MAX_PICKS) break;
+    if (candidates.length >= maxCandidates) break;
     const sectorCount = perSector.get(s.profile.meta.sector) ?? 0;
     if (sectorCount >= MAX_PER_SECTOR) continue;
     perSector.set(s.profile.meta.sector, sectorCount + 1);
-    selected.push(s);
-  }
 
-  const rawWeights = selected.map((s) => s.verdict.confidence / Math.max(s.profile.fundamentals.beta, 0.5));
-  const totalRaw = rawWeights.reduce((a, b) => a + b, 0) || 1;
-
-  const picks: InvestmentPick[] = selected.map((s, i) => {
-    const allocationPct = Math.min(MAX_SINGLE_ALLOCATION_PCT, Math.round((rawWeights[i] / totalRaw) * 100));
-    const amount = (capital * allocationPct) / 100;
-    const atrVal = lastValid(atr(s.profile.seriesDaily, 14)) ?? s.price * 0.02;
-    return {
+    const daily = s.profile.seriesDaily;
+    const price = daily[daily.length - 1].close;
+    const atrVal = lastValid(atr(daily, 14)) ?? price * 0.02;
+    candidates.push({
       symbol: s.profile.meta.symbol,
       name: s.profile.meta.name,
       sector: s.profile.meta.sector,
-      price: s.price,
+      price,
       confidence: s.verdict.confidence,
       bullishCount: s.verdict.bullishCount,
       reason: s.verdict.topReason,
       beta: s.profile.fundamentals.beta,
-      allocationPct,
-      amount,
-      shares: Math.floor(amount / s.price),
-      stopLoss: s.price - 2 * atrVal,
-      target: s.price + 4 * atrVal,
-      spark: s.profile.seriesDaily.slice(-30).map((c) => c.close),
+      stopLoss: price - 2.5 * atrVal,
+      target: price + 4 * atrVal,
+      spark: daily.slice(-30).map((c) => c.close),
       earningsDaysAway: s.profile.earnings.nextEarningsDaysAway,
-    };
+    });
+  }
+  return candidates;
+}
+
+export interface AllocatedPick extends Candidate {
+  assessment: SymbolAssessment;
+  allocationPct: number;
+  amount: number;
+  shares: number;
+}
+
+/**
+ * Position sizing over ENGINE-CONFIRMED picks only (advice buy/hold), weighted
+ * by composite reliability / beta with a per-position cap. The unallocated
+ * remainder stays as cash — the plan never forces 100% equity.
+ */
+export function allocatePortfolio(
+  candidates: Candidate[],
+  assessments: Record<string, SymbolAssessment>,
+  capital: number,
+): { picks: AllocatedPick[]; cashPct: number } {
+  const confirmed = candidates.filter((c) => {
+    const a = assessments[c.symbol];
+    return a && (a.advice === 'buy' || a.advice === 'hold');
   });
 
-  const allocated = picks.reduce((sum, p) => sum + p.allocationPct, 0);
+  const rawWeights = confirmed.map((c) => assessments[c.symbol].composite / Math.max(c.beta, 0.5));
+  const totalRaw = rawWeights.reduce((a, b) => a + b, 0) || 1;
 
-  const avoid: AvoidItem[] = scored
+  const picks: AllocatedPick[] = confirmed
+    .map((c, i) => {
+      const allocationPct = Math.min(MAX_SINGLE_ALLOCATION_PCT, Math.round((rawWeights[i] / totalRaw) * 100));
+      const amount = (capital * allocationPct) / 100;
+      return {
+        ...c,
+        assessment: assessments[c.symbol],
+        allocationPct,
+        amount,
+        shares: Math.floor(amount / c.price),
+      };
+    })
+    .sort((a, b) => b.assessment.composite - a.assessment.composite);
+
+  const allocated = picks.reduce((s, p) => s + p.allocationPct, 0);
+  return { picks, cashPct: Math.max(0, 100 - allocated) };
+}
+
+export function buildAvoidList(weights: ModuleWeights, max = 5): AvoidItem[] {
+  return getAllProfiles()
+    .map((profile) => ({ profile, verdict: computeVerdict(computeAllModules(profile), weights) }))
     .filter((s) => s.verdict.signal === 'down')
     .sort((a, b) => b.verdict.confidence - a.verdict.confidence)
-    .slice(0, 5)
+    .slice(0, max)
     .map((s) => ({
       symbol: s.profile.meta.symbol,
       name: s.profile.meta.name,
       sector: s.profile.meta.sector,
-      price: s.price,
       confidence: s.verdict.confidence,
       bearishCount: s.verdict.bearishCount,
       reason: s.verdict.topReason,
     }));
-
-  return { picks, avoid, cashPct: Math.max(0, 100 - allocated) };
 }

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { PROFILE_WEIGHTS } from '../lib/modules/aggregate';
 import type { ModuleWeights, PaperPosition, PaperTrade, Sector, TraderProfile, WatchlistAlert } from '../types/market';
 
-export type ViewId = 'dashboard' | 'recommendations' | 'stock' | 'screener' | 'watchlist' | 'backtest' | 'papertrading';
+export type ViewId = 'dashboard' | 'recommendations' | 'performance' | 'stock' | 'screener' | 'watchlist' | 'backtest' | 'papertrading';
 
 const STARTING_CASH = 100_000;
 
